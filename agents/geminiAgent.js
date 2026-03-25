@@ -30,7 +30,7 @@ Focus on sector themes, FII/DII flows, RBI policy, and earnings calendars.`
 };
 
 export class GeminiAgent {
-  constructor(apiKey, model = 'gemini-1.5-flash') {
+  constructor(apiKey, model = 'gemini-2.0-flash') {
     this.genAI = new GoogleGenerativeAI(apiKey);
     this.model = model;
     this._contextBus = {};   // shared state between agents
@@ -43,8 +43,6 @@ export class GeminiAgent {
     const persona  = AGENT_PERSONAS[agentName];
     if (!persona) throw new Error(`Unknown agent: ${agentName}`);
 
-    const model = this.genAI.getGenerativeModel({ model: this.model });
-
     const systemContext = `${persona}
 
 Current context:
@@ -53,11 +51,16 @@ ${JSON.stringify(contextData, null, 2)}
 Shared agent context:
 ${JSON.stringify(this._contextBus, null, 2)}`;
 
+    const model = this.genAI.getGenerativeModel({ model: this.model });
+
     const history = this._conversationHistory[agentName] || [];
-    const chat = model.startChat({
-      history: history.map(h => ({ role: h.role, parts: [{ text: h.content }] })),
-      systemInstruction: systemContext
-    });
+    // Inject system context as first user/model turn so it works with all models
+    const fullHistory = [
+      { role: 'user', parts: [{ text: `[System Instructions]\n${systemContext}\n\nAcknowledge and follow these instructions.` }] },
+      { role: 'model', parts: [{ text: 'Understood. I will follow these instructions.' }] },
+      ...history.map(h => ({ role: h.role, parts: [{ text: h.content }] }))
+    ];
+    const chat = model.startChat({ history: fullHistory });
 
     const result = await chat.sendMessage(userMessage);
     const response = result.response.text();
@@ -155,7 +158,7 @@ ${JSON.stringify(this._contextBus, null, 2)}`;
    */
   async buildStrategy(naturalLanguageDescription) {
     const model = this.genAI.getGenerativeModel({ model: this.model });
-    const prompt = `You are a trading strategy builder. Convert this natural language description into a JSON strategy definition.
+    const prompt = `You are a trading strategy builder for Indian stock markets (NSE). Convert this natural language description into a JSON strategy definition.
 
 Description: "${naturalLanguageDescription}"
 

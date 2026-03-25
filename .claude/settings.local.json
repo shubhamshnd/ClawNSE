@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell -NoProfile -Command \"[System.IO.File]::ReadAllText\\(''scripts\\\\install.ps1''\\) | Out-Null; Write-Host ''Parse OK''\")"
+    ]
+  }
+}

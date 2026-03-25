@@ -5,6 +5,7 @@
 import axios from 'axios';
 import fs from 'fs-extra';
 import path from 'path';
+import readline from 'readline';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -68,21 +69,40 @@ export class NubraClient {
     if (await this.loadSession()) return this.sessionToken;
     console.log('[NubraClient] Starting Nubra auth flow...');
 
-    const step1 = await this.http.post('/sendphoneotp', { phone: this.phone, skip_totp: false });
-    let tempToken = step1.data.temp_token;
+    let tempToken;
+    try {
+      const step1 = await this.http.post('/sendphoneotp', { phone: this.phone, skip_totp: false });
+      tempToken = step1.data.temp_token;
+    } catch (e) {
+      throw new Error(`Auth step 1 (send OTP) failed: ${e.response?.status} ${JSON.stringify(e.response?.data || e.message)}`);
+    }
 
-    const step2 = await this.http.post('/sendphoneotp',
-      { phone: this.phone, skip_totp: true },
-      { headers: { 'x-temp-token': tempToken, 'x-device-id': this.deviceId } }
-    );
-    tempToken = step2.data.temp_token;
+    try {
+      const step2 = await this.http.post('/sendphoneotp',
+        { phone: this.phone, skip_totp: true },
+        { headers: { 'x-temp-token': tempToken, 'x-device-id': this.deviceId } }
+      );
+      tempToken = step2.data.temp_token;
+    } catch (e) {
+      throw new Error(`Auth step 2 (skip TOTP) failed: ${e.response?.status} ${JSON.stringify(e.response?.data || e.message)}`);
+    }
 
     let otp;
     if (otpCallback) {
       otp = await otpCallback();
+    } else if (process.stdin.isTTY) {
+      // Interactive terminal — prompt directly
+      console.log(`[NubraClient] OTP sent to ${this.phone}.`);
+      const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+      otp = await new Promise(resolve => {
+        rl.question('Enter OTP: ', answer => { rl.close(); resolve(answer.trim()); });
+      });
+      if (!otp) throw new Error('No OTP entered');
     } else {
+      // Non-interactive (systemd, background) — fall back to file polling
       const otpFile = path.join(__dirname, '../data/pending_otp.txt');
       console.log(`[NubraClient] OTP sent to ${this.phone}. Write the OTP to: ${otpFile}`);
+      console.log('[NubraClient] Or send /otp <code> via Telegram.');
       const maxWait = 120000;
       const pollInterval = 3000;
       let waited = 0;
@@ -95,20 +115,30 @@ export class NubraClient {
         await new Promise(r => setTimeout(r, pollInterval));
         waited += pollInterval;
       }
-      if (!otp) throw new Error('OTP timeout — write OTP to data/pending_otp.txt within 2 minutes');
+      if (!otp) throw new Error('OTP timeout - write OTP to data/pending_otp.txt or send /otp via Telegram');
     }
 
-    const step3 = await this.http.post('/verifyphoneotp',
-      { phone: this.phone, otp },
-      { headers: { 'x-temp-token': tempToken, 'x-device-id': this.deviceId } }
-    );
-    const authToken = step3.data.auth_token;
+    let authToken;
+    try {
+      const step3 = await this.http.post('/verifyphoneotp',
+        { phone: this.phone, otp },
+        { headers: { 'x-temp-token': tempToken, 'x-device-id': this.deviceId } }
+      );
+      authToken = step3.data.auth_token;
+    } catch (e) {
+      throw new Error(`Auth step 3 (verify OTP) failed: ${e.response?.status} ${JSON.stringify(e.response?.data || e.message)}`);
+    }
 
-    const step4 = await this.http.post('/verifypin',
-      { pin: this.mpin },
-      { headers: { Authorization: `Bearer ${authToken}`, 'x-device-id': this.deviceId } }
-    );
-    const sessionToken = step4.data.session_token;
+    let sessionToken;
+    try {
+      const step4 = await this.http.post('/verifypin',
+        { pin: this.mpin },
+        { headers: { Authorization: `Bearer ${authToken}`, 'x-device-id': this.deviceId } }
+      );
+      sessionToken = step4.data.session_token;
+    } catch (e) {
+      throw new Error(`Auth step 4 (verify MPIN) failed: ${e.response?.status} ${JSON.stringify(e.response?.data || e.message)}`);
+    }
     await this.saveSession(sessionToken);
     console.log('[NubraClient] Auth successful ✓');
     return sessionToken;
@@ -133,6 +163,31 @@ export class NubraClient {
       headers: { ...this.authHeaders(), 'Content-Type': 'text/plain' }
     });
     return this._parseCandles(res.data, symbol);
+  }
+
+  /**
+   * Fetch candles for multiple symbols in a single API call
+   * Returns Map<symbol, candles[]>
+   */
+  async getCandlesBatch(symbols, interval = '1d', startDate, endDate, type = 'STOCK', exchange = 'NSE') {
+    const payload = {
+      query: [{
+        exchange, type, values: symbols,
+        fields: ['open', 'high', 'low', 'close', 'cumulative_volume'],
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        interval, intraDay: false, realTime: false
+      }]
+    };
+    const res = await this.http.post('/charts/timeseries', payload, {
+      headers: { ...this.authHeaders(), 'Content-Type': 'text/plain' }
+    });
+    const result = new Map();
+    for (const sym of symbols) {
+      const candles = this._parseCandles(res.data, sym);
+      if (candles.length) result.set(sym, candles);
+    }
+    return result;
   }
 
   _parseCandles(data, symbol) {

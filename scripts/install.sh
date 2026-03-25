@@ -1,8 +1,23 @@
 #!/bin/bash
-# TradePi Install Script — Raspberry Pi 5 (Ubuntu/Debian)
+# TradePi Install Script — Linux (Raspberry Pi / Ubuntu / Debian)
+# For Windows, use: scripts\install.ps1
 set -e
-echo "🤖 TradePi Installer"
-echo "===================="
+
+# Must be run from project root
+if [ ! -f "package.json" ]; then
+  echo "ERROR: Run this script from the project root: bash scripts/install.sh"
+  exit 1
+fi
+
+echo "🤖 TradePi Installer (Linux)"
+echo "============================="
+
+# Check we're on Linux
+if [[ "$OSTYPE" != "linux"* ]]; then
+  echo "ERROR: This script is for Linux only."
+  echo "On Windows, run: powershell -ExecutionPolicy Bypass -File scripts\\install.ps1"
+  exit 1
+fi
 
 # Check Node.js
 if ! command -v node &>/dev/null || [[ $(node -v | cut -d. -f1 | tr -d v) -lt 18 ]]; then

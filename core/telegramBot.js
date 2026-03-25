@@ -21,19 +21,32 @@ export class TelegramNotifier {
   // ─── Sending ──────────────────────────────────────────────────────────────
 
   async send(text, options = {}) {
+    const opts = { parse_mode: 'Markdown', disable_web_page_preview: true, ...options };
     try {
-      return await this.bot.sendMessage(this.chatId, text, {
-        parse_mode: 'Markdown',
-        disable_web_page_preview: true,
-        ...options
-      });
+      return await this.bot.sendMessage(this.chatId, text, opts);
     } catch (e) {
-      // If message is too long, split it
       if (e.message?.includes('message is too long')) {
         const chunks = this._splitMessage(text, 4000);
         for (const chunk of chunks) {
-          await this.bot.sendMessage(this.chatId, chunk, { parse_mode: 'Markdown', ...options });
+          await this.bot.sendMessage(this.chatId, chunk, opts);
           await new Promise(r => setTimeout(r, 500));
+        }
+      } else if (e.message?.includes("can't parse entities")) {
+        // Markdown failed — retry as plain text
+        console.warn('[Telegram] Markdown failed, retrying as plain text');
+        const plainOpts = { ...opts, parse_mode: undefined };
+        try {
+          return await this.bot.sendMessage(this.chatId, text, plainOpts);
+        } catch (e2) {
+          if (e2.message?.includes('message is too long')) {
+            const chunks = this._splitMessage(text, 4000);
+            for (const chunk of chunks) {
+              await this.bot.sendMessage(this.chatId, chunk, plainOpts);
+              await new Promise(r => setTimeout(r, 500));
+            }
+          } else {
+            console.error('[Telegram] Send error (plain):', e2.message);
+          }
         }
       } else {
         console.error('[Telegram] Send error:', e.message);
@@ -56,23 +69,23 @@ export class TelegramNotifier {
     this.bot.onText(new RegExp(`^\/${command}\\b`), (msg, match) => {
       const args = msg.text.replace(`/${command}`, '').trim();
       handler(msg, args).catch(e => {
-        this.send(`❌ Error: ${e.message}`);
+        this.send(`Error: ${e.message}`);
       });
     });
   }
 
   _setupDefaultCommands() {
     this.bot.on('message', async (msg) => {
-      // Only respond to messages from authorized chat
       if (String(msg.chat.id) !== String(this.chatId)) return;
     });
 
     this.bot.setMyCommands([
-      { command: 'scan',      description: 'Run immediate stock scan' },
+      { command: 'scan',      description: 'Run stock scan with a strategy' },
+      { command: 'analyze',   description: 'Run all strategies on cached data' },
       { command: 'status',    description: 'Bot status & next run time' },
       { command: 'portfolio', description: 'Show portfolio & positions' },
       { command: 'ask',       description: 'Ask AI analyst a question' },
-      { command: 'strategy',  description: 'List/switch strategies' },
+      { command: 'strategy',  description: 'List available strategies' },
       { command: 'otp',       description: 'Submit OTP for Nubra login' },
     ]).catch(() => {});
   }
@@ -86,7 +99,7 @@ export class TelegramNotifier {
       const otpFile = path.join(__dirname, '../data/pending_otp.txt');
       await fs.ensureDir(path.dirname(otpFile));
       await fs.writeFile(otpFile, otp);
-      await this.send('✅ OTP received. Completing authentication...');
+      await this.send('OTP received. Completing authentication...');
     });
   }
 
@@ -109,10 +122,13 @@ export class TelegramNotifier {
   }
 
   async sendStartupMessage() {
-    await this.send(`🤖 *TradePi Bot Started*\n\n` +
-      `Running on Raspberry Pi 5\n` +
+    await this.send(`*ClawNSE Bot Started*\n\n` +
       `Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n` +
-      `Commands: /scan /status /portfolio /ask /strategy\n` +
-      `_Use /otp [code] if authentication is needed_`);
+      `Commands:\n` +
+      `/scan - Run stock scan (shows strategy list)\n` +
+      `/status - Bot health\n` +
+      `/portfolio - Holdings & positions\n` +
+      `/ask - Chat with AI analyst\n` +
+      `/strategy - List strategies`);
   }
 }

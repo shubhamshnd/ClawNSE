@@ -23,9 +23,18 @@ Built with Nubra REST API · Gemini AI Multi-Agent · Telegram Bot · Node.js ·
 
 ### 1. Clone & Install
 ```bash
-git clone https://github.com/YOUR_USERNAME/tradepi.git
-cd tradepi
+git clone https://github.com/shubhamshnd/clawnse.git
+cd clawnse
+```
+
+**Linux / Raspberry Pi:**
+```bash
 bash scripts/install.sh
+```
+
+**Windows (PowerShell):**
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
 ### 2. Configure

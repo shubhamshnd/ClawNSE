@@ -64,7 +64,7 @@ export default function App() {
       }}>
         <div style={{ padding:'0 20px 24px', borderBottom:'1px solid var(--border)' }}>
           <div style={{ fontFamily:'var(--font-mono)', fontWeight:700, fontSize:18, color:'var(--accent)' }}>
-            TRADE<span style={{color:'var(--accent2)'}}>PI</span>
+            Claw<span style={{color:'var(--accent2)'}}>NSE</span>
           </div>
           <div style={{ fontSize:11, color:'var(--muted)', marginTop:4 }}>
             <span style={{ display:'inline-block', width:6, height:6, borderRadius:'50%',

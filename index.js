@@ -1,5 +1,5 @@
 /**
- * TradePi — Agentic Trading Bot for Raspberry Pi 5
+ * ClawNSE — Agentic Trading Bot for Raspberry Pi 5
  * Entry point: initializes all services, scheduler, web server, telegram bot
  */
 import 'dotenv/config';
@@ -51,14 +51,34 @@ const scheduler  = new Scheduler();
 telegram.registerOtpHandler();
 
 telegram.onCommand('scan', async (msg, args) => {
-  const strategy = args.trim().toUpperCase() || (process.env.DEFAULT_STRATEGY || 'EMA_CROSSOVER');
-  await telegram.send(`🔍 Running *${strategy}* scan across all stocks...`);
+  const strategyArg = args.trim().toUpperCase();
+
+  // If no strategy specified, list them
+  if (!strategyArg) {
+    const strats = strategyEngine.listStrategies();
+    let txt = 'Pick a strategy:\n\n';
+    strats.forEach((s, i) => { txt += `${i+1}. ${s}\n`; });
+    txt += '\nUsage: /scan STRATEGY\nExample: /scan EMA_CROSSOVER';
+    await telegram.send(txt, { parse_mode: undefined });
+    return;
+  }
+
+  await telegram.send(`Starting ${strategyArg} scan...`, { parse_mode: undefined });
+
+  const onProgress = async (scanned, total, signals) => {
+    await telegram.send(`${scanned}/${total} scanned | ${signals} signals so far`, { parse_mode: undefined });
+  };
+
   try {
-    const results = await scanner.scan(strategy);
-    const analysis = await gemini.analyzeScanResults(results, strategy);
+    const results = await scanner.scan(strategyArg, {}, onProgress);
+    const signalCount = results.filter(r => r.signal !== 'NONE').length;
+    await telegram.send(`Scan complete: ${results.length} stocks | ${signalCount} signals found\n\nAnalyzing with AI...`, { parse_mode: undefined });
+
+    const analysis = await gemini.analyzeScanResults(results, strategyArg);
     await telegram.send(analysis);
   } catch (e) {
-    await telegram.send(`❌ Scan failed: ${e.message}`);
+    console.error('[Scan] Error:', e.message);
+    await telegram.send(`Scan failed: ${e.message}`);
   }
 });
 
@@ -67,7 +87,7 @@ telegram.onCommand('status', async (msg) => {
   const strats = strategyEngine.listStrategies();
   const plugins = Object.keys(mcpManager.getInstalled());
   await telegram.send(
-    `🟢 *TradePi Status*\n\n` +
+    `🟢 *ClawNSE Status*\n\n` +
     `*Scheduled Jobs:* ${jobs.length > 0 ? jobs.join(', ') : 'None'}\n` +
     `*Strategies:* ${strats.length}\n` +
     `*Plugins:* ${plugins.length > 0 ? plugins.join(', ') : 'None'}\n` +
@@ -108,12 +128,80 @@ telegram.onCommand('ask', async (msg, args) => {
   await telegram.send(`🤖 *AI Analyst:*\n\n${response}`);
 });
 
+telegram.onCommand('analyze', async (msg, args) => {
+  const cached = scanner.getLastResults();
+  if (!cached) {
+    await telegram.send('No cached scan data. Run /scan first.', { parse_mode: undefined });
+    return;
+  }
+
+  const scanTime = scanner.getLastScanTime();
+  const age = scanTime ? `${Math.round((Date.now() - scanTime.getTime()) / 60000)} min ago` : 'unknown';
+  await telegram.send(`Running all strategies on cached data (${cached.length} stocks, scanned ${age})...`, { parse_mode: undefined });
+
+  const allStrategies = strategyEngine.listStrategies().filter(s => !s.startsWith('CUSTOM:'));
+  const allResults = {};
+
+  for (const strat of allStrategies) {
+    const reanalyzed = await scanner.reanalyze(strat);
+    if (reanalyzed) {
+      const signals = reanalyzed.filter(r => r.signal !== 'NONE' && r.confidence >= 70);
+      allResults[strat] = signals;
+    }
+  }
+
+  // Build summary
+  let summary = `Multi-Strategy Analysis (${cached.length} stocks)\n\n`;
+  for (const [strat, signals] of Object.entries(allResults)) {
+    summary += `${strat}: ${signals.length} high-confidence signals\n`;
+  }
+
+  // Find stocks that appear in 3+ strategies
+  const stockCounts = {};
+  for (const [strat, signals] of Object.entries(allResults)) {
+    for (const s of signals) {
+      if (!stockCounts[s.symbol]) stockCounts[s.symbol] = [];
+      stockCounts[s.symbol].push({ strategy: strat, signal: s.signal, confidence: s.confidence });
+    }
+  }
+
+  const topPicks = Object.entries(stockCounts)
+    .filter(([, strats]) => strats.length >= 2)
+    .sort((a, b) => b[1].length - a[1].length)
+    .slice(0, 15);
+
+  if (topPicks.length) {
+    summary += '\n--- TOP PICKS (2+ strategies agree) ---\n\n';
+    for (const [symbol, strats] of topPicks) {
+      summary += `${symbol} (${strats.length} strategies)\n`;
+      for (const s of strats) {
+        summary += `  ${s.strategy}: ${s.signal} [${s.confidence}%]\n`;
+      }
+      summary += '\n';
+    }
+  } else {
+    summary += '\nNo stocks found with 2+ confirming strategies.\n';
+  }
+
+  await telegram.send(summary, { parse_mode: undefined });
+
+  // Send top picks to AI for final analysis
+  if (topPicks.length) {
+    await telegram.send('Asking AI for final analysis...', { parse_mode: undefined });
+    const aiAnalysis = await gemini.callAgent('MarketAnalyst',
+      `Here are today's top stock picks where multiple technical strategies agree. Rank them and give a brief 1-line take on each:\n\n${JSON.stringify(topPicks.map(([sym, s]) => ({ symbol: sym, strategies: s })), null, 2)}`,
+      { type: 'multi_strategy_confluence' }
+    );
+    await telegram.send(aiAnalysis);
+  }
+});
+
 telegram.onCommand('strategy', async (msg, args) => {
   const strats = strategyEngine.listStrategies();
-  let txt = `📋 *Available Strategies*\n\n`;
-  strats.forEach((s, i) => { txt += `${i+1}. \`${s}\`\n`; });
-  txt += `\n_Use /scan [STRATEGY_NAME] to run_`;
-  await telegram.send(txt);
+  let txt = 'Available Strategies:\n\n';
+  strats.forEach((s, i) => { txt += `${i+1}. ${s}\n`; });
+  txt += '\nRun with: /scan STRATEGY_NAME';
+  await telegram.send(txt, { parse_mode: undefined });
 });
 
 // ─── Scheduled Scans ─────────────────────────────────────────────────────
@@ -144,7 +232,7 @@ const { server } = createApiServer({
 
 const PORT = parseInt(process.env.PORT) || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 TradePi running on http://0.0.0.0:${PORT}`);
+  console.log(`\n🚀 ClawNSE running on http://0.0.0.0:${PORT}`);
   console.log(`📱 Web dashboard: http://[Pi-IP]:${PORT}`);
 });
 
@@ -152,7 +240,7 @@ server.listen(PORT, '0.0.0.0', () => {
 
 async function startup() {
   try {
-    console.log('🤖 TradePi starting...');
+    console.log('🤖 ClawNSE starting...');
     await fs.ensureDir(path.join(__dirname, 'data'));
     await fs.ensureDir(path.join(__dirname, 'logs'));
 

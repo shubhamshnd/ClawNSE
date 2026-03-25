@@ -128,6 +128,15 @@ telegram.onCommand('ask', async (msg, args) => {
   await telegram.send(`🤖 *AI Analyst:*\n\n${response}`);
 });
 
+telegram.onCommand('stop', async (msg, args) => {
+  if (!scanner.isScanning()) {
+    await telegram.send('No scan running.', { parse_mode: undefined });
+    return;
+  }
+  scanner.abort();
+  await telegram.send('Stopping scan... will finish current batch and save results collected so far.', { parse_mode: undefined });
+});
+
 telegram.onCommand('analyze', async (msg, args) => {
   const cached = scanner.getLastResults();
   if (!cached) {

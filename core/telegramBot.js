@@ -10,6 +10,61 @@ import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
+// MarkdownV2 requires escaping these characters outside of code blocks
+const MV2_ESCAPE = /([_*\[\]()~`>#+\-=|{}.!\\])/g;
+
+/**
+ * Escape text for MarkdownV2.
+ * Preserves *bold*, _italic_, `code`, and ```code blocks```.
+ */
+function escapeMarkdownV2(text) {
+  // Split into segments: code blocks, inline code, bold, italic, and plain text
+  const parts = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    // Match code blocks first
+    const codeBlock = remaining.match(/^```[\s\S]*?```/);
+    if (codeBlock) {
+      parts.push(codeBlock[0]); // keep as-is
+      remaining = remaining.slice(codeBlock[0].length);
+      continue;
+    }
+
+    // Match inline code
+    const inlineCode = remaining.match(/^`[^`]+`/);
+    if (inlineCode) {
+      parts.push(inlineCode[0]); // keep as-is
+      remaining = remaining.slice(inlineCode[0].length);
+      continue;
+    }
+
+    // Match bold *text*
+    const bold = remaining.match(/^\*[^*]+\*/);
+    if (bold) {
+      const inner = bold[0].slice(1, -1).replace(MV2_ESCAPE, '\\$1');
+      parts.push(`*${inner}*`);
+      remaining = remaining.slice(bold[0].length);
+      continue;
+    }
+
+    // Match italic _text_
+    const italic = remaining.match(/^_[^_]+_/);
+    if (italic) {
+      const inner = italic[0].slice(1, -1).replace(MV2_ESCAPE, '\\$1');
+      parts.push(`_${inner}_`);
+      remaining = remaining.slice(italic[0].length);
+      continue;
+    }
+
+    // Plain character — escape it
+    parts.push(remaining[0].replace(MV2_ESCAPE, '\\$1'));
+    remaining = remaining.slice(1);
+  }
+
+  return parts.join('');
+}
+
 export class TelegramNotifier {
   constructor(token, chatId) {
     this.chatId = chatId;
@@ -21,7 +76,29 @@ export class TelegramNotifier {
   // ─── Sending ──────────────────────────────────────────────────────────────
 
   async send(text, options = {}) {
-    const opts = { parse_mode: 'Markdown', disable_web_page_preview: true, ...options };
+    const opts = { disable_web_page_preview: true, ...options };
+
+    // If parse_mode explicitly set to undefined, send plain
+    if (options.parse_mode === undefined && 'parse_mode' in options) {
+      return this._sendWithRetry(text, opts);
+    }
+
+    // Try MarkdownV2 with escaping
+    const escaped = escapeMarkdownV2(text);
+    const mv2Opts = { ...opts, parse_mode: 'MarkdownV2' };
+    try {
+      return await this._sendWithRetry(escaped, mv2Opts);
+    } catch (e) {
+      if (e.message?.includes("can't parse entities")) {
+        // MarkdownV2 failed — send as plain text
+        console.warn('[Telegram] MarkdownV2 failed, sending as plain text');
+        return this._sendWithRetry(text, { ...opts, parse_mode: undefined });
+      }
+      throw e;
+    }
+  }
+
+  async _sendWithRetry(text, opts) {
     try {
       return await this.bot.sendMessage(this.chatId, text, opts);
     } catch (e) {
@@ -31,25 +108,8 @@ export class TelegramNotifier {
           await this.bot.sendMessage(this.chatId, chunk, opts);
           await new Promise(r => setTimeout(r, 500));
         }
-      } else if (e.message?.includes("can't parse entities")) {
-        // Markdown failed — retry as plain text
-        console.warn('[Telegram] Markdown failed, retrying as plain text');
-        const plainOpts = { ...opts, parse_mode: undefined };
-        try {
-          return await this.bot.sendMessage(this.chatId, text, plainOpts);
-        } catch (e2) {
-          if (e2.message?.includes('message is too long')) {
-            const chunks = this._splitMessage(text, 4000);
-            for (const chunk of chunks) {
-              await this.bot.sendMessage(this.chatId, chunk, plainOpts);
-              await new Promise(r => setTimeout(r, 500));
-            }
-          } else {
-            console.error('[Telegram] Send error (plain):', e2.message);
-          }
-        }
       } else {
-        console.error('[Telegram] Send error:', e.message);
+        throw e;
       }
     }
   }
@@ -66,10 +126,10 @@ export class TelegramNotifier {
 
   onCommand(command, handler) {
     this._commandHandlers[command.replace('/', '')] = handler;
-    this.bot.onText(new RegExp(`^\/${command}\\b`), (msg, match) => {
+    this.bot.onText(new RegExp(`^\/${command}\\b`), (msg) => {
       const args = msg.text.replace(`/${command}`, '').trim();
       handler(msg, args).catch(e => {
-        this.send(`Error: ${e.message}`);
+        this.send(`Error: ${e.message}`, { parse_mode: undefined });
       });
     });
   }
@@ -81,6 +141,7 @@ export class TelegramNotifier {
 
     this.bot.setMyCommands([
       { command: 'scan',      description: 'Run stock scan with a strategy' },
+      { command: 'stop',      description: 'Stop running scan (keeps results so far)' },
       { command: 'analyze',   description: 'Run all strategies on cached data' },
       { command: 'status',    description: 'Bot status & next run time' },
       { command: 'portfolio', description: 'Show portfolio & positions' },
@@ -95,11 +156,11 @@ export class TelegramNotifier {
   registerOtpHandler() {
     this.onCommand('otp', async (msg, args) => {
       const otp = args.trim();
-      if (!otp) { await this.send('Usage: /otp 123456'); return; }
+      if (!otp) { await this.send('Usage: /otp 123456', { parse_mode: undefined }); return; }
       const otpFile = path.join(__dirname, '../data/pending_otp.txt');
       await fs.ensureDir(path.dirname(otpFile));
       await fs.writeFile(otpFile, otp);
-      await this.send('OTP received. Completing authentication...');
+      await this.send('OTP received. Completing authentication...', { parse_mode: undefined });
     });
   }
 
@@ -122,13 +183,17 @@ export class TelegramNotifier {
   }
 
   async sendStartupMessage() {
-    await this.send(`*ClawNSE Bot Started*\n\n` +
+    await this.send(
+      '*ClawNSE Bot Started*\n\n' +
       `Time: ${new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}\n\n` +
-      `Commands:\n` +
-      `/scan - Run stock scan (shows strategy list)\n` +
-      `/status - Bot health\n` +
-      `/portfolio - Holdings & positions\n` +
-      `/ask - Chat with AI analyst\n` +
-      `/strategy - List strategies`);
+      'Commands:\n' +
+      '/scan - Run stock scan\n' +
+      '/stop - Stop running scan\n' +
+      '/analyze - Multi-strategy analysis\n' +
+      '/status - Bot health\n' +
+      '/portfolio - Holdings & positions\n' +
+      '/ask - Chat with AI analyst\n' +
+      '/strategy - List strategies'
+    );
   }
 }

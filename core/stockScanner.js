@@ -19,7 +19,19 @@ export class StockScanner {
     this.csvPath  = config.csvPath || path.join(__dirname, '../data/equity_l.csv');
     this._lastResults = null;
     this._lastScanTime = null;
+    this._aborted = false;
+    this._scanning = false;
   }
+
+  /** Abort the current scan — keeps results collected so far */
+  abort() {
+    if (this._scanning) {
+      this._aborted = true;
+      console.log('[Scanner] Abort requested — finishing current batch...');
+    }
+  }
+
+  isScanning() { return this._scanning; }
 
   /** Get cached results (in-memory or from disk) */
   getLastResults() {
@@ -89,6 +101,8 @@ export class StockScanner {
     const symbols = await this.loadStockList();
     console.log(`[Scanner] Scanning ${symbols.length} stocks with strategy: ${strategyName}`);
 
+    this._scanning = true;
+    this._aborted = false;
     const results = [];
     let failures  = 0;
     let scanned   = 0;
@@ -102,6 +116,11 @@ export class StockScanner {
     let lastProgressAt = 0;
 
     for (let i = 0; i < symbols.length; i += BATCH_SIZE) {
+      if (this._aborted) {
+        console.log(`\n[Scanner] Aborted at ${scanned}/${symbols.length}`);
+        break;
+      }
+
       const batch = symbols.slice(i, i + BATCH_SIZE);
       const batchResults = await Promise.allSettled(
         batch.map(sym => this._scanSymbol(sym, strategyName, params, from, now))
@@ -131,7 +150,10 @@ export class StockScanner {
       }
     }
 
-    console.log(`\n[Scanner] Scan complete. Success: ${results.length}, Failed: ${failures}, Signals: ${results.filter(r => r.signal !== 'NONE').length}`);
+    this._scanning = false;
+    const stopped = this._aborted ? ' (stopped early)' : '';
+    this._aborted = false;
+    console.log(`\n[Scanner] Scan complete${stopped}. Success: ${results.length}, Failed: ${failures}, Signals: ${results.filter(r => r.signal !== 'NONE').length}`);
 
     // Cache results to disk
     this._lastResults = results;

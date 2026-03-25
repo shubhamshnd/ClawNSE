@@ -1,0 +1,12 @@
+node_modules/
+web/node_modules/
+web/dist/
+.env
+data/session.json
+data/pending_otp.txt
+logs/
+*.log
+.DS_Store
+mcp_plugins/*/
+!mcp_plugins/mcpManager.js
+!mcp_plugins/_registry.json

@@ -1,0 +1,18 @@
+[Unit]
+Description=TradePi Agentic Trading Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/tradebot
+ExecStart=/usr/bin/node index.js
+Restart=on-failure
+RestartSec=10
+EnvironmentFile=/home/pi/tradebot/.env
+StandardOutput=append:/home/pi/tradebot/logs/tradepi.log
+StandardError=append:/home/pi/tradebot/logs/tradepi-error.log
+
+[Install]
+WantedBy=multi-user.target

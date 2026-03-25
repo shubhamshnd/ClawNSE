@@ -1,0 +1,84 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:       #0a0c10;
+  --bg2:      #111318;
+  --bg3:      #1a1d24;
+  --border:   #252830;
+  --accent:   #00d4aa;
+  --accent2:  #7b6cff;
+  --bull:     #00d4aa;
+  --bear:     #ff4d6d;
+  --warn:     #ffc107;
+  --muted:    #6b7280;
+  --text:     #e8eaf0;
+  --text2:    #9ca3af;
+  --font-mono: 'JetBrains Mono', monospace;
+  --font-ui:   'Syne', sans-serif;
+  --radius:   8px;
+  --radius-lg: 16px;
+}
+
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font-ui); font-size: 14px; }
+
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: var(--bg2); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+.mono { font-family: var(--font-mono); }
+
+button {
+  cursor: pointer;
+  font-family: var(--font-ui);
+  border: none;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+input, textarea, select {
+  font-family: var(--font-ui);
+  background: var(--bg3);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  outline: none;
+  width: 100%;
+}
+
+input:focus, textarea:focus, select:focus {
+  border-color: var(--accent);
+}
+
+.card {
+  background: var(--bg2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 20px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  font-family: var(--font-mono);
+  letter-spacing: 0.5px;
+}
+
+.badge-bull  { background: rgba(0,212,170,0.15); color: var(--bull); }
+.badge-bear  { background: rgba(255,77,109,0.15); color: var(--bear); }
+.badge-warn  { background: rgba(255,193,7,0.15);  color: var(--warn); }
+.badge-muted { background: rgba(107,114,128,0.15); color: var(--muted); }
+.badge-purple { background: rgba(123,108,255,0.15); color: var(--accent2); }
+
+@keyframes pulse { 0%,100% { opacity:1 } 50% { opacity:.4 } }
+@keyframes slideUp { from { opacity:0; transform:translateY(10px) } to { opacity:1; transform:translateY(0) } }
+@keyframes spin { to { transform: rotate(360deg) } }
+
+.animate-pulse { animation: pulse 2s infinite; }
+.animate-spin  { animation: spin 0.8s linear infinite; }
+.animate-slide { animation: slideUp 0.3s ease; }
